@@ -1,0 +1,5 @@
+__pycache__/
+*.py[cod]
+# Platform artifacts are generated locally and uploaded by CI as release
+# assets. The tracked wheelhouse README documents their contract.
+wheelhouse/*/
