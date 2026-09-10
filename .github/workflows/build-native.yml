@@ -1,0 +1,55 @@
+name: Build Kimodo native binaries
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14
+            platform: darwin-arm64
+            enable_vulkan: "false"
+          - runner: ubuntu-22.04
+            platform: linux-x86_64
+            enable_vulkan: "true"
+          - runner: windows-2022
+            platform: windows-x86_64
+            enable_vulkan: "true"
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Ninja (macOS/Linux)
+        if: runner.os != 'Windows'
+        run: |
+          if [ "${{ runner.os }}" = "macOS" ]; then brew install ninja; else sudo apt-get update && sudo apt-get install -y ninja-build patchelf; fi
+        shell: bash
+
+      - name: Install Vulkan SDK (Linux)
+        if: matrix.platform == 'linux-x86_64'
+        run: |
+          wget -qO - https://packages.lunarg.com/lunarg-signing-key-pub.asc | sudo apt-key add -
+          sudo wget -qO /etc/apt/sources.list.d/lunarg-vulkan-jammy.list https://packages.lunarg.com/vulkan/lunarg-vulkan-jammy.list
+          sudo apt-get update
+          sudo apt-get install -y vulkan-sdk
+
+      - name: Install Vulkan SDK (Windows)
+        if: matrix.platform == 'windows-x86_64'
+        run: |
+          Invoke-WebRequest -Uri "https://sdk.lunarg.com/sdk/download/latest/windows/vulkan-sdk.exe" -OutFile vulkan-sdk.exe
+          .\vulkan-sdk.exe --accept-licenses --default-answer --confirm-command install
+          echo "VULKAN_SDK=C:\VulkanSDK" >> $env:GITHUB_ENV
+        shell: pwsh
+
+      - run: python tools/build_native.py --output native/${{ matrix.platform }} ${{ matrix.enable_vulkan == 'true' && '--enable-vulkan' || '' }}
+        shell: bash
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kimodo-native-${{ matrix.platform }}
+          path: native/${{ matrix.platform }}/

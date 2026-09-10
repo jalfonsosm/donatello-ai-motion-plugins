@@ -1,5 +1,5 @@
 """Driver run inside the shared venv (as a subprocess, cwd = the AnyTop
-checkout) to sample one AnyTop motion and write it straight to FBX.
+checkout) to sample one AnyTop motion and write it straight to GLB.
 
 This is a fork of AnyTop's own `sample/generate.py` (MIT-licensed, Copyright
 (c) Anytop2025 contributors, https://github.com/Anytop2025/Anytop) trimmed to
@@ -8,9 +8,9 @@ sampled positions tensor replaced: the original script converts positions to
 BVH rotations via a third-party `Motion` package
 (`git+https://github.com/inbar-2344/Motion.git`) that carries no license of
 its own. This project does not install or import that package; the
-`positions -> local rotations -> FBX` step below is this project's own
+`positions -> local rotations -> GLB` step below is this project's own
 implementation (`_shared_positions_to_rotations.py`,
-`_shared_motion_recover.py`, `_shared_bvh_fbx.py`).
+`_shared_motion_recover.py`, `_shared_glb.py`).
 
 Invoked with cwd set to the AnyTop checkout root, so `from utils...`,
 `from model...`, `from data_loaders...` resolve exactly as upstream's own
@@ -36,7 +36,7 @@ def main() -> None:
     shared_lib_parent = _pop_flag("--shared-lib-parent")
     output_path = _pop_flag("--output")
     sys.path.insert(0, shared_lib_parent)
-    import _shared_bvh_fbx as bvh_fbx
+    import _shared_glb as glb
     import _shared_motion_recover as motion_recover
     from _shared_positions_to_rotations import positions_to_local_euler_xyz
 
@@ -104,7 +104,7 @@ def main() -> None:
     offsets = np.asarray(cond_dict[object_type]["offsets"], dtype=np.float64)
     local_euler, root_translation = positions_to_local_euler_xyz(positions, [int(p) for p in parents], offsets)
 
-    bvh_fbx.write_glb_from_euler_xyz(
+    glb.write_glb_from_euler_xyz(
         Path(output_path), list(joints_names), [int(p) for p in parents],
         [tuple(map(float, row)) for row in offsets],
         [[tuple(map(float, local_euler[f, j])) for j in range(n_joints)] for f in range(n_frames)],

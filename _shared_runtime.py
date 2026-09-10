@@ -45,6 +45,17 @@ def runtime_python(runtime: Path) -> Path:
     return runtime / "venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
 
 
+def native_platform_key() -> str:
+    """OS-arch key with no Python ABI suffix, for a plain native binary
+    bundle (no Python C-extension wheel involved, so no cp3xx tag applies)."""
+    system = {"Darwin": "darwin", "Linux": "linux", "Windows": "windows"}.get(platform.system())
+    machine = platform.machine().lower()
+    machine = {"aarch64": "arm64", "amd64": "x86_64", "x64": "x86_64"}.get(machine, machine)
+    if not system or machine not in {"arm64", "x86_64"}:
+        return "unsupported"
+    return f"{system}-{machine}"
+
+
 def platform_key() -> str:
     system = {"Darwin": "darwin", "Linux": "linux", "Windows": "windows"}.get(platform.system())
     machine = platform.machine().lower()
@@ -101,21 +112,58 @@ def ensure_venv(runtime: Path, progress, check_cancelled, progress_range: tuple[
     return python
 
 
+def huggingface_user_token() -> str | None:
+    """The user's own Hugging Face login token, read from its real default
+    location (`~/.cache/huggingface/token`, or `$HF_HOME/token` if the host
+    process itself has HF_HOME set) -- i.e. wherever it landed from the
+    user's own `huggingface-cli login` / `huggingface_hub.login()`, entirely
+    independent of the redirected `HF_HOME` a subprocess run through this
+    module gets pointed at."""
+    home = os.environ.get("HF_HOME")
+    token_path = Path(home).expanduser() / "token" if home else Path.home() / ".cache" / "huggingface" / "token"
+    try:
+        token = token_path.read_text(encoding="utf-8").strip()
+        return token or None
+    except OSError:
+        return None
+
+
 def run(
     command: list[str], label: str, *, runtime: Path | None = None,
+    hf_cache_dir: Path | None = None,
     progress=None, progress_range: tuple[float, float] | None = None,
     check_cancelled=None, extra_environment: dict[str, str] | None = None,
     cwd: Path | None = None,
 ) -> None:
-    """Run an interruptible child process and forward useful CLI progress."""
+    """Run an interruptible child process and forward useful CLI progress.
+
+    `runtime`: prepend this shared venv's interpreter directory onto PATH,
+    and (unless `hf_cache_dir` is given too) also redirect HF_HOME/TORCH_HOME
+    into it. `hf_cache_dir`: redirect HF_HOME there instead/as well -- for a
+    subprocess that doesn't use the shared venv at all (e.g. a host-Python
+    subprocess that only needs `huggingface_hub`, already available there)
+    but still needs its downloads reclaimable from a specific engine's own
+    managed cache rather than the shared one.
+    """
     environment = os.environ.copy()
     if runtime is not None:
         environment["PATH"] = str(runtime_python(runtime).parent) + os.pathsep + environment.get("PATH", "")
-        # Gated/large weights must be reclaimable from Donatello's Plugins
-        # storage group, not left in a user-global Hugging Face/Torch cache.
-        environment["HF_HOME"] = str(runtime / "huggingface")
-        environment["HUGGINGFACE_HUB_CACHE"] = str(runtime / "huggingface" / "hub")
         environment["TORCH_HOME"] = str(runtime / "torch")
+    hf_home = hf_cache_dir if hf_cache_dir is not None else (runtime / "huggingface" if runtime is not None else None)
+    if hf_home is not None:
+        # Gated/large weights must be reclaimable from Donatello's Plugins
+        # storage group, not left in a user-global Hugging Face cache.
+        environment["HF_HOME"] = str(hf_home)
+        environment["HUGGINGFACE_HUB_CACHE"] = str(hf_home / "hub")
+        # huggingface_hub derives its token file path from HF_HOME
+        # (<HF_HOME>/token); redirecting HF_HOME above for cache-isolation
+        # also silently hides the user's real login token, so requests go
+        # out unauthenticated (slower rate limits, and gated models fail
+        # outright). Forward it explicitly unless the caller already set one.
+        if not environment.get("HF_TOKEN"):
+            token = huggingface_user_token()
+            if token:
+                environment["HF_TOKEN"] = token
     if extra_environment:
         environment.update(extra_environment)
     process = subprocess.Popen(

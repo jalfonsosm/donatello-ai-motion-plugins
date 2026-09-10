@@ -1,10 +1,10 @@
 # Third-party notices
 
-## Kimodo / SOMA-X (NVIDIA)
+## kimodo.cpp / ggml (Apache-2.0 / MIT)
 
-The Kimodo and SOMA-X wheels created by `tools/build_wheelhouse.py` are derived from NVIDIA source releases under Apache-2.0. Every generated platform wheelhouse carries copies of their respective licenses as `KIMODO_LICENSE.txt` and `SOMA_X_LICENSE.txt`.
+`native/<platform>/` vendors prebuilt binaries of [localai-org/kimodo.cpp](https://github.com/localai-org/kimodo.cpp) (Apache-2.0) and its pinned [ggml](https://github.com/ggml-org/ggml) submodule (MIT) -- a from-scratch GGML/C++ reimplementation of NVIDIA's Kimodo, built by `tools/build_native.py` and committed directly (source is never vendored, only the built binaries + their SHA-256 manifest). kimodo.cpp's own `src/skeleton.hpp` -- copied into `kimodo_engine.py` as `_SOMA30_NAMES`/`_SOMA30_PARENTS`/`_SOMA30_OFFSETS` -- states it was itself "copied from NVIDIA Kimodo's Apache-2.0 `kimodo/skeleton/definitions.py`"; both source and destination are Apache-2.0.
 
-The wheelhouse intentionally excludes PyTorch and other transitive packages. They are obtained as their official binary wheels at installation time and retain their own licenses and notices. Kimodo model weights are never distributed by this plugin; users obtain them from the official provider subject to the applicable NVIDIA model terms.
+Kimodo's motion checkpoints (`LocalAI-io/Kimodo-SOMA-RP-v1.1-GGML` on Hugging Face) are subject to the NVIDIA Open Model License. Its text encoder is LLM2Vec over Meta Llama 3 (`LocalAI-io/Llama-3-Kimodo-GGML`); though the GGUF conversion is hosted ungated, the underlying weights remain subject to Meta's Llama 3 license terms as well. Neither is distributed by this plugin -- both download directly from their respective Hugging Face repos at generation time, after the user accepts the applicable terms there.
 
 ## AnyTop (MIT)
 

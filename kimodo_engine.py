@@ -1,18 +1,30 @@
-"""Kimodo adapter for Donatello's generic AI Motion API.
+"""Kimodo adapter for Donatello's generic AI Motion API, via kimodo.cpp
+(https://github.com/localai-org/kimodo.cpp, Apache-2.0/MIT) instead of
+NVIDIA's Python reference implementation.
 
-The host knows nothing about Kimodo. This plugin installs its dependencies
-into the *shared* Donatello AI Motion venv (`_shared_runtime`) on first
-generation, then runs Kimodo in that separate Python process. Only the
-model weights and Kimodo/SOMA-X source checkout are private to this engine
-(under its own `context.cache_dir`); the interpreter and its common
-dependencies (PyTorch, etc.) are shared with the other engines in this
-project so they aren't downloaded and installed twice.
+Why the switch: NVIDIA's Python kimodo needs the full fp16
+`meta-llama/Meta-Llama-3-8B-Instruct` (~16GB) loaded in PyTorch, with no
+quantization path available, and cannot run at all on an 8GB-VRAM machine.
+kimodo.cpp is a from-scratch GGML/C++ reimplementation of the same models
+(motion diffusion *and* the LLM2Vec bidirectional text encoder -- a real
+engineering feat, since LLM2Vec strips Llama-3's causal attention mask,
+which a stock llama.cpp fork does not support) with a layer-streaming knob
+(`KIMODO_TEXT_LAYER_CHUNK`) that keeps only a few of the text encoder's 32
+transformer layers resident in VRAM/RAM at once -- the actual mechanism that
+makes an 8GB card workable. (It is not weight quantization: kimodo.cpp's own
+README says "quantised models are not implemented yet", so the GGUF download
+is comparable in size to the original fp16 weights.)
+
+This adapter ships prebuilt native binaries per platform under
+`native/<platform>/` (built by `tools/build_native.py`, see
+`.github/workflows/build-native.yml` for the cross-platform CI matrix), so an
+end user never needs a C++ toolchain -- matching this project's existing
+"never invokes a native compiler on an end-user's machine" rule.
 """
 
 from __future__ import annotations
 
 import json
-import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -27,33 +39,65 @@ from flatrig_private.local_ai.motion_plugin_api import (
 # Sibling `_shared_*` modules aren't on sys.path by default: the host loads
 # this file via `importlib.util.spec_from_file_location`, which does not add
 # its own directory to sys.path the way a normally-imported package would.
-_PLUGIN_DIR = str(Path(__file__).resolve().parent)
-if _PLUGIN_DIR not in sys.path:
-    sys.path.insert(0, _PLUGIN_DIR)
+_PLUGIN_DIR = Path(__file__).resolve().parent
+if str(_PLUGIN_DIR) not in sys.path:
+    sys.path.insert(0, str(_PLUGIN_DIR))
 
 import _shared_runtime as runtime
 
+_MOTION_REPO = "LocalAI-io/Kimodo-SOMA-RP-v1.1-GGML"
+_MOTION_FILENAME = "models/kimodo-soma-rp-v1.1-f32.gguf"
+_TEXT_REPO = "LocalAI-io/Llama-3-Kimodo-GGML"
+_TEXT_BUNDLE_PATTERN = "generated/llm2vec-text-bundle/*"
+_TEXT_BUNDLE_SUBDIR = "generated/llm2vec-text-bundle"
+_NATIVE_MANIFEST_SCHEMA_VERSION = 1
+_GLB_RUNTIME_VERSION = 1
+# kimodo.cpp's CLI takes a frame count directly, not a duration/fps pair;
+# 30 fps matches the original NVIDIA Python plugin's own default.
+_FPS = 30.0
+_GLB_DEPENDENCIES = ("numpy", "pygltflib>=1.16")
 
-_KIMODO_REPOSITORY = "https://github.com/nv-tlabs/kimodo.git"
-_KIMODO_REVISION = "1aece8c124d73d255ceff5086d983b844c9f4e94"
-_SOMA_REPOSITORY = "https://github.com/NVlabs/SOMA-X.git"
-_SOMA_REVISION = "d29dbe5a3f5a0b2632ecac91e8d5125f243a7e36"
-_RUNTIME_VERSION = 7  # bumped: dependencies now install into the shared venv, not a per-engine one; +pygltflib
-_BUNDLE_SCHEMA_VERSION = 1
-_BINARY_DEPENDENCIES = (
-    "torch", "hydra-core>=1.3", "omegaconf>=2.3", "numpy>=1.23", "scipy>=1.10",
-    "transformers==5.1.0", "urllib3>=2.6.3", "boto3", "peft>=0.18", "einops>=0.7", "pygltflib>=1.16",
-    "tqdm>=4.0", "packaging>=21.0", "pydantic>=2.0", "filelock>=3.20.3",
-    "gradio>=6.8.0", "gradio_client>=1.0", "trimesh>=3.21.7", "scenepic>=1.1.0",
-    "pillow>=9.0", "av>=16.1.0", "bvhio",
-)
+# Apache-2.0: copied from kimodo.cpp's src/skeleton.hpp, which itself is
+# copied from NVIDIA Kimodo's Apache-2.0 kimodo/skeleton/definitions.py --
+# the fixed 30-joint "soma30" control skeleton every SOMA RP/SEED checkpoint
+# predicts (parent-local rest offsets, in metres).
+_SOMA30_NAMES = [
+    "Hips", "Spine1", "Spine2", "Chest", "Neck1", "Neck2", "Head", "Jaw",
+    "LeftEye", "RightEye", "LeftShoulder", "LeftArm", "LeftForeArm", "LeftHand",
+    "LeftHandThumbEnd", "LeftHandMiddleEnd", "RightShoulder", "RightArm", "RightForeArm",
+    "RightHand", "RightHandThumbEnd", "RightHandMiddleEnd", "LeftLeg", "LeftShin", "LeftFoot",
+    "LeftToeBase", "RightLeg", "RightShin", "RightFoot", "RightToeBase",
+]
+_SOMA30_PARENTS = [
+    -1, 0, 1, 2, 3, 4, 5, 6, 6, 6, 3, 10, 11, 12, 13, 13, 3, 16, 17, 18, 19, 19, 0, 22, 23, 24, 0, 26, 27, 28,
+]
+_SOMA30_OFFSETS = [
+    (0.0, 0.0, 0.0), (-0.00013727, 0.0500376256, -0.00053726669),
+    (-1.86574103e-9, 0.0712530139, -0.000298248546), (-5.75188398e-9, 0.0755006305, -0.00815970992),
+    (-0.00181676517, 0.263112953, -0.00553348292), (-2.85102231e-8, 0.0770939664, 0.0230258546),
+    (-4.5975437e-8, 0.0612891595, 0.0195370861), (2.63687901e-5, 0.0047559225, 0.0309494062),
+    (0.0320638079, 0.0538020513, 0.0758688308), (-0.0322244017, 0.05361869, 0.0755823359),
+    (0.0162165175, 0.232371641, 0.0511341324), (0.149198457, 2.19397873e-8, -0.0550232576),
+    (0.287393078, 2.50268389e-9, -2.58787737e-5), (0.270939812, -7.06625108e-9, 2.60897248e-5),
+    (0.122686267, -0.0322017573, 0.0483306876), (0.190119595, -0.00312878387, -0.000339570373),
+    (-0.0138011824, 0.231803086, 0.0521415786), (-0.150371962, 1.17387901e-7, -0.0554560437),
+    (-0.287366393, 1.87628082e-8, -2.59709359e-5), (-0.271336198, -1.16767401e-9, 2.61269368e-5),
+    (-0.122642483, -0.0321145448, 0.0480403904), (-0.190005945, -0.00306615542, -0.0003157343),
+    (0.10043214, -0.0843452671, 0.0259565473), (-1e-8, -0.432217537, -0.00802912805),
+    (1e-8, -0.421550959, -0.0348152298), (0.0, -0.0505947206, 0.132315294),
+    (-0.10047278, -0.0829525995, 0.0262031695), (1e-8, -0.433622059, -0.00805555828),
+    (2e-8, -0.421173943, -0.0347839785), (-3.42907669e-9, -0.0507960932, 0.132841956),
+]
 
 
 class KimodoPlugin(MotionPlugin):
     plugin_id = "kimodo"
     label = "Kimodo"
-    description = "Text-to-motion. Its isolated local runtime installs automatically on first use."
-    version = "0.3.0"
+    description = (
+        "Text-to-motion (native C++/GGML runtime, CPU/Metal/Vulkan). "
+        "Its runtime and weights install automatically on first use."
+    )
+    version = "0.4.0"
     license_id = "NVIDIA Open Model License"
     license_url = "https://github.com/nv-tlabs/kimodo"
     requires_consent = True
@@ -62,243 +106,166 @@ class KimodoPlugin(MotionPlugin):
 
     def form_schema(self) -> list[dict[str, Any]]:
         return [
-            {"id": "model", "label": "Kimodo model", "type": "select", "default": "Kimodo-SOMA-RP-v1.1", "options": ["Kimodo-SOMA-RP-v1.1", "Kimodo-SOMA-SEED-v1.1"]},
             {"id": "steps", "label": "Diffusion steps", "type": "number", "default": 42, "min": 1, "max": 200, "step": 1},
         ]
 
     def is_installed(self, cache_root: Path) -> bool:
         from flatrig_private.local_ai.motion_plugins import plugin_cache_directory
-        return _install_is_ready(plugin_cache_directory(cache_root, self.plugin_id))
+        cache_dir = plugin_cache_directory(cache_root, self.plugin_id)
+        return _native_binary_dir() is not None and _weights_are_ready(cache_dir)
 
     def generate(self, request: MotionRequest, context: MotionContext) -> MotionResult:
         context.check_cancelled()
+        context.progress(0.0, "Preparing Kimodo's native runtime")
+        native_dir = _native_binary_dir()
+        if native_dir is None:
+            raise RuntimeError(
+                f"No prebuilt Kimodo native binary for this platform ({runtime.native_platform_key()})."
+            )
+        binary = native_dir / ("kmd-generate.exe" if sys.platform == "win32" else "kmd-generate")
+
+        motion_gguf, text_bundle_dir = _ensure_weights(context)
+        context.check_cancelled()
+
         shared = runtime.shared_runtime_root(context.cache_dir)
-        python = runtime.ensure_venv(shared, context.progress, context.check_cancelled, progress_range=(0.0, 0.02))
-        _ensure_dependencies(python, shared, context)
-        npz = context.output_dir / "kimodo_motion.npz"
-        bvh = context.output_dir / "kimodo_motion.bvh"
-        model = str(request.extra["model"])
-        context.progress(0.5, "Starting Kimodo generation")
-        command = [
-            str(python), "-m", "kimodo.scripts.generate", request.prompt,
-            "--model", model, "--duration", str(request.duration_seconds),
-            "--output", str(npz), "--diffusion_steps", str(int(request.extra["steps"])),
-            "--seed", str(request.seed),
-        ]
-        if not _install_has_motion_correction(context.cache_dir):
-            # The optional native extension is only enabled by a verified
-            # platform bundle. Kimodo's CLI supports this documented opt-out.
-            command.append("--no-postprocess")
+        python = runtime.ensure_venv(shared, context.progress, context.check_cancelled, progress_range=(0.65, 0.67))
+        _ensure_glb_dependencies(python, shared, context)
+
+        prompt_path = context.output_dir / "prompt.txt"
+        prompt_path.write_text(request.prompt, encoding="utf-8")
+        raw_dir = context.output_dir / "raw"
+        frames = max(1, round(request.duration_seconds * _FPS))
+        steps = int(request.extra["steps"])
+
+        context.progress(0.75, "Sampling Kimodo motion")
         runtime.run(
-            command, "Kimodo generation", runtime=shared,
-            progress=context.progress, progress_range=(0.5, 0.9),
-            check_cancelled=context.check_cancelled,
+            [
+                str(binary), str(motion_gguf), str(text_bundle_dir), str(prompt_path),
+                str(frames), str(steps), str(request.seed), str(raw_dir),
+            ],
+            "Kimodo generation", cwd=native_dir, progress=context.progress,
+            progress_range=(0.75, 0.95), check_cancelled=context.check_cancelled,
         )
         context.check_cancelled()
-        context.progress(0.9, "Converting Kimodo motion to SOMA BVH")
-        runtime.run(
-            [str(python), "-m", "kimodo.scripts.motion_convert", str(npz), str(bvh)],
-            "Kimodo BVH conversion", runtime=shared,
-            progress=context.progress, progress_range=(0.9, 0.99),
-            check_cancelled=context.check_cancelled,
-        )
-        if not bvh.is_file():
-            raise RuntimeError("Kimodo did not produce a BVH output.")
-        context.check_cancelled()
-        context.progress(0.99, "Exporting GLB")
-        # GLB, not FBX: the retarget pipeline's 3D-source-export step reads
-        # the source through Blender, and Blender's FBX importer only
-        # supports *binary* FBX, which this project's pure-Python exporter
-        # does not produce. BVH itself is not an accepted *source* format
-        # for that step either (only an accepted output) -- GLB is. This
-        # conversion needs `pygltflib`, which lives in the shared venv, not
-        # in this host process -- run it there as a subprocess.
+        context.progress(0.95, "Exporting GLB")
         glb_path = context.output_dir / "kimodo_motion.glb"
+        skeleton_args: list[str] = []
+        for index, name in enumerate(_SOMA30_NAMES):
+            offset = _SOMA30_OFFSETS[index]
+            skeleton_args += [name, str(_SOMA30_PARENTS[index]), str(offset[0]), str(offset[1]), str(offset[2])]
         runtime.run(
-            [str(python), str(_plugin_root() / "_bvh_to_glb_driver.py"), str(_plugin_root()), str(bvh), str(glb_path)],
-            "Converting BVH to GLB", runtime=shared, progress=context.progress,
-            progress_range=(0.99, 1.0), check_cancelled=context.check_cancelled,
+            [
+                str(python), str(_PLUGIN_DIR / "_kimodo_native_to_glb_driver.py"), str(_PLUGIN_DIR),
+                str(raw_dir / "root_positions.f32"), str(raw_dir / "local_rotations_xyzw.f32"),
+                str(glb_path), str(_FPS), str(len(_SOMA30_NAMES)), *skeleton_args,
+            ],
+            "Converting native output to GLB", runtime=shared, progress=context.progress,
+            progress_range=(0.95, 1.0), check_cancelled=context.check_cancelled,
         )
         if not glb_path.is_file():
             raise RuntimeError("Kimodo did not produce a GLB output.")
         context.progress(1.0, "Kimodo GLB exported")
         return MotionResult(
             glb_path,
-            {"source_skeleton": "soma", "fps": request.fps, "model": model},
+            {"source_skeleton": "soma", "fps": _FPS},
             artifact_kind="animation_3d",
         )
 
 
-def _install_marker(cache_dir: Path) -> Path:
-    return cache_dir / "installed.json"
-
-
-def _install_is_ready(cache_dir: Path) -> bool:
-    marker = _install_marker(cache_dir)
-    if not marker.is_file():
-        return False
-    try:
-        return int(json.loads(marker.read_text(encoding="utf-8")).get("runtime_version", 0)) == _RUNTIME_VERSION
-    except (OSError, ValueError, json.JSONDecodeError):
-        return False
-
-
-def _install_metadata(cache_dir: Path) -> dict[str, Any]:
-    try:
-        data = json.loads(_install_marker(cache_dir).read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) else {}
-    except (OSError, ValueError, json.JSONDecodeError):
-        return {}
-
-
-def _install_has_motion_correction(cache_dir: Path) -> bool:
-    return _install_metadata(cache_dir).get("motion_correction") == "prebuilt"
-
-
-def _ensure_dependencies(python: Path, shared: Path, context: MotionContext) -> None:
-    cache_dir = context.cache_dir
-    if _install_is_ready(cache_dir):
-        return
-
-    context.check_cancelled()
-    context.progress(0.02, "Installing Kimodo runtime dependencies (first use only)")
-    runtime.run(
-        [str(python), "-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel"],
-        "Preparing Kimodo installer", runtime=shared, progress=context.progress,
-        progress_range=(0.02, 0.05), check_cancelled=context.check_cancelled,
-    )
-    # hydra-core (a binary dependency below) pins antlr4-python3-runtime==4.9.*,
-    # and that package has never published a wheel for the 4.9.x series (only
-    # 4.10+ did) -- so `--only-binary=:all:` makes the whole batch install
-    # unresolvable. Install it first, explicitly allowed to build from its
-    # sdist: it is a pure-Python parser runtime with no C extension, so this
-    # still never invokes a native compiler.
-    runtime.run(
-        [
-            str(python), "-m", "pip", "install",
-            "--no-binary", "antlr4-python3-runtime", "antlr4-python3-runtime==4.9.3",
-        ],
-        "Installing Kimodo's pure-Python ANTLR runtime", runtime=shared, progress=context.progress,
-        progress_range=(0.05, 0.06), check_cancelled=context.check_cancelled,
-    )
-    runtime.pip_install(
-        python, list(_BINARY_DEPENDENCIES), "Installing Kimodo binary dependencies",
-        runtime=shared, progress=context.progress, progress_range=(0.06, 0.2), check_cancelled=context.check_cancelled,
-    )
-    bundle = _platform_bundle()
-    if bundle is not None:
-        _install_platform_bundle(python, shared, cache_dir, bundle, context.progress, context.check_cancelled)
-        motion_correction = "prebuilt" if bundle.get("motion_correction") else "disabled"
-    else:
-        _install_source_runtime(python, shared, cache_dir, context.progress, context.check_cancelled)
-        motion_correction = "disabled"
-    context.check_cancelled()
-    _install_marker(cache_dir).write_text(json.dumps({
-        "runtime_version": _RUNTIME_VERSION,
-        "platform": runtime.platform_key(),
-        "motion_correction": motion_correction,
-    }), encoding="utf-8")
-
-
-def _plugin_root() -> Path:
-    return Path(__file__).resolve().parent
-
-
-def _platform_bundle() -> dict[str, Any] | None:
-    """Return a verified local wheel bundle for this OS/CPU/Python ABI."""
-    bundle_dir = _plugin_root() / "wheelhouse" / runtime.platform_key()
-    manifest_path = bundle_dir / "manifest.json"
+def _native_binary_dir() -> Path | None:
+    key = runtime.native_platform_key()
+    candidate = _PLUGIN_DIR / "native" / key
+    manifest_path = candidate / "manifest.json"
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, ValueError, json.JSONDecodeError):
         return None
-    if not isinstance(manifest, dict) or manifest.get("schema_version") != _BUNDLE_SCHEMA_VERSION:
+    if not isinstance(manifest, dict) or manifest.get("schema_version") != _NATIVE_MANIFEST_SCHEMA_VERSION:
         return None
-    if manifest.get("platform") != runtime.platform_key() or not isinstance(manifest.get("wheels"), list):
+    if manifest.get("platform") != key or not isinstance(manifest.get("files"), list):
         return None
-    roles = set()
-    for item in manifest["wheels"]:
+    for item in manifest["files"]:
         if not isinstance(item, dict):
             return None
-        filename, digest, role = item.get("filename"), item.get("sha256"), item.get("role")
+        filename, digest = item.get("filename"), item.get("sha256")
         if not isinstance(filename, str) or Path(filename).name != filename:
             return None
-        if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+        if not runtime.matches_sha256(candidate / filename, str(digest)):
             return None
-        if role not in {"kimodo", "soma", "motion_correction"} or not runtime.matches_sha256(bundle_dir / filename, digest):
-            return None
-        roles.add(role)
-    required_roles = {"kimodo", "soma"}
-    has_correction = "motion_correction" in roles
-    if not required_roles.issubset(roles) or bool(manifest.get("motion_correction")) != has_correction:
-        return None
-    return manifest
+    return candidate
 
 
-def _install_platform_bundle(python: Path, shared: Path, cache_dir: Path, bundle: dict[str, Any], progress, check_cancelled) -> None:
-    bundle_dir = _materialize_platform_bundle(cache_dir, bundle)
-    wheels = {item["role"]: bundle_dir / item["filename"] for item in bundle["wheels"]}
-    installs = [("soma", (0.2, 0.22)), ("kimodo", (0.22, 0.24))]
-    if "motion_correction" in wheels:
-        installs.append(("motion_correction", (0.24, 0.25)))
-    for role, span in installs:
+def _weights_marker(cache_dir: Path) -> Path:
+    return cache_dir / "weights" / ".complete"
+
+
+def _weights_are_ready(cache_dir: Path) -> bool:
+    return _weights_marker(cache_dir).is_file()
+
+
+def _ensure_weights(context: MotionContext) -> tuple[Path, Path]:
+    cache_dir = context.cache_dir
+    weights_dir = cache_dir / "weights"
+    motion_gguf = weights_dir / "motion.gguf"
+    text_bundle_dir = weights_dir / _TEXT_BUNDLE_SUBDIR
+    if _weights_are_ready(cache_dir):
+        return motion_gguf, text_bundle_dir
+
+    context.check_cancelled()
+    hf_cache = cache_dir / "huggingface"
+    if not motion_gguf.is_file():
+        context.progress(0.05, "Downloading Kimodo SOMA motion checkpoint (~1.1GB, ungated)")
+        _download_hf_file(context, hf_cache, _MOTION_REPO, _MOTION_FILENAME, motion_gguf, progress_range=(0.05, 0.2))
+    context.check_cancelled()
+    if not text_bundle_dir.is_dir() or not any(text_bundle_dir.glob("*.gguf")):
+        context.progress(0.2, "Downloading Kimodo's native LLM2Vec text encoder (~15GB, subject to Meta's Llama 3 terms)")
         runtime.run(
-            [str(python), "-m", "pip", "install", "--no-index", "--no-deps", str(wheels[role])],
-            f"Installing prebuilt Kimodo {role} wheel", runtime=shared, progress=progress,
-            progress_range=span, check_cancelled=check_cancelled,
+            [sys.executable, str(_PLUGIN_DIR / "_kimodo_weights_download_driver.py"),
+             _TEXT_REPO, _TEXT_BUNDLE_PATTERN, str(weights_dir)],
+            "Downloading Kimodo text encoder", hf_cache_dir=hf_cache, progress=context.progress,
+            progress_range=(0.2, 0.65), check_cancelled=context.check_cancelled,
         )
+    context.check_cancelled()
+    _weights_marker(cache_dir).parent.mkdir(parents=True, exist_ok=True)
+    _weights_marker(cache_dir).write_text("ok", encoding="utf-8")
+    return motion_gguf, text_bundle_dir
 
 
-def _materialize_platform_bundle(cache_dir: Path, bundle: dict[str, Any]) -> Path:
-    """Copy verified release wheels into the removable managed plugin cache."""
-    import shutil
-    source_dir = _plugin_root() / "wheelhouse" / runtime.platform_key()
-    target_dir = cache_dir / "bundles" / runtime.platform_key()
-    target_dir.mkdir(parents=True, exist_ok=True)
-    for item in bundle["wheels"]:
-        source = source_dir / item["filename"]
-        target = target_dir / item["filename"]
-        if not runtime.matches_sha256(target, item["sha256"]):
-            shutil.copy2(source, target)
-        if not runtime.matches_sha256(target, item["sha256"]):
-            raise RuntimeError(f"The copied Kimodo wheel did not match its manifest: {item['filename']}")
-    shutil.copy2(source_dir / "manifest.json", target_dir / "manifest.json")
-    return target_dir
-
-
-def _install_source_runtime(python: Path, shared: Path, cache_dir: Path, progress, check_cancelled) -> None:
-    """Fallback with no native compilation; a release bundle is preferred."""
-    soma = _source_checkout(cache_dir, "soma-x", _SOMA_REPOSITORY, _SOMA_REVISION, progress, (0.2, 0.22), check_cancelled)
-    kimodo = _source_checkout(cache_dir, "kimodo", _KIMODO_REPOSITORY, _KIMODO_REVISION, progress, (0.22, 0.23), check_cancelled)
+def _download_hf_file(
+    context: MotionContext, hf_cache: Path, repo_id: str, filename: str, destination: Path,
+    *, progress_range: tuple[float, float],
+) -> None:
     runtime.run(
-        [str(python), "-m", "pip", "install", "--no-deps", "--no-build-isolation", str(soma)],
-        "Installing SOMA runtime without native compilation", runtime=shared,
-        progress=progress, progress_range=(0.23, 0.24), check_cancelled=check_cancelled,
+        [sys.executable, str(_PLUGIN_DIR / "_kimodo_weights_download_driver.py"), repo_id, filename, str(destination.parent)],
+        "Downloading Kimodo motion checkpoint", hf_cache_dir=hf_cache, progress=context.progress,
+        progress_range=progress_range, check_cancelled=context.check_cancelled,
     )
-    runtime.run(
-        [str(python), "-m", "pip", "install", "--no-deps", "--no-build-isolation", str(kimodo)],
-        "Installing Kimodo without native compilation", runtime=shared,
-        progress=progress, progress_range=(0.24, 0.25), check_cancelled=check_cancelled,
-        extra_environment={"SKIP_MOTION_CORRECTION_IN_SETUP": "1"},
-    )
+    downloaded = destination.parent / filename
+    if downloaded.is_file() and downloaded != destination:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        downloaded.replace(destination)
 
 
-def _source_checkout(cache_dir: Path, name: str, repository: str, revision: str, progress, span, check_cancelled) -> Path:
-    """Keep a patchable upstream checkout inside the plugin's managed cache."""
-    source = cache_dir / "source" / name
-    if not (source / ".git").is_dir():
-        source.parent.mkdir(parents=True, exist_ok=True)
-        runtime.run(
-            ["git", "clone", "--depth", "1", repository, str(source)],
-            f"Downloading {name} source", progress=progress,
-            progress_range=span, check_cancelled=check_cancelled,
-        )
-    runtime.run(
-        ["git", "-C", str(source), "checkout", "--detach", revision],
-        f"Pinning {name} source", progress=progress,
-        progress_range=span, check_cancelled=check_cancelled,
+def _glb_deps_marker(cache_dir: Path) -> Path:
+    return cache_dir / "glb_deps_installed.json"
+
+
+def _ensure_glb_dependencies(python: Path, shared: Path, context: MotionContext) -> None:
+    marker = _glb_deps_marker(context.cache_dir)
+    if marker.is_file():
+        try:
+            if int(json.loads(marker.read_text(encoding="utf-8")).get("runtime_version", 0)) == _GLB_RUNTIME_VERSION:
+                return
+        except (OSError, ValueError, json.JSONDecodeError):
+            pass
+    context.check_cancelled()
+    context.progress(0.67, "Installing GLB export dependencies (first use only)")
+    runtime.pip_install(
+        python, list(_GLB_DEPENDENCIES), "Installing GLB export dependencies",
+        runtime=shared, progress=context.progress, progress_range=(0.67, 0.75), check_cancelled=context.check_cancelled,
     )
-    return source
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text(json.dumps({"runtime_version": _GLB_RUNTIME_VERSION}), encoding="utf-8")
 
 
 ENGINES = [KimodoPlugin]

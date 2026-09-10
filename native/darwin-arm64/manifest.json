@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "platform": "darwin-arm64",
+  "kimodo_cpp_revision": "568b0253f346fbe369587c7dae73d58594a14c90",
+  "ggml_revision": "8c63e70982c95ceb862e3a1073a2c1beef75d60a",
+  "vulkan_enabled": false,
+  "files": [
+    {
+      "filename": "kmd-generate",
+      "sha256": "33d049bbff46846009d54365e2b9921a8fad645f28647eb87deb77859b616884",
+      "executable": true
+    },
+    {
+      "filename": "kmd-inspect",
+      "sha256": "193aa51170c5cc14bb253814639a4695f74c8a89e9cd51d35d4294b22fa6a472",
+      "executable": true
+    },
+    {
+      "filename": "libggml-base.0.dylib",
+      "sha256": "4fc1dcf737878897989f28a9d1a077d063b66aa80b848c036a8e14da1ae1ba20",
+      "executable": false
+    },
+    {
+      "filename": "libggml-blas.0.dylib",
+      "sha256": "e64f1621244ba4bd38b82475f5642ae005833600662d8adb477c66dd0b3f180d",
+      "executable": false
+    },
+    {
+      "filename": "libggml-cpu.0.dylib",
+      "sha256": "97c3df9bda9316c53bd932f3e99af2960b0100d44bb0d45d89073ed8341d6156",
+      "executable": false
+    },
+    {
+      "filename": "libggml-metal.0.dylib",
+      "sha256": "6a1a15564601edef358833a2df7d178b13210c346c6e0e627edc25ee4ddab83d",
+      "executable": false
+    },
+    {
+      "filename": "libggml.0.dylib",
+      "sha256": "51c753ce3a61426028b43e0111422015c6d2057f37c1f83978a16748c197a5f7",
+      "executable": false
+    }
+  ]
+}
