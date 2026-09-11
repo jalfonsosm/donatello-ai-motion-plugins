@@ -43,7 +43,8 @@ jobs:
         run: |
           Invoke-WebRequest -Uri "https://sdk.lunarg.com/sdk/download/latest/windows/vulkan-sdk.exe" -OutFile vulkan-sdk.exe
           .\vulkan-sdk.exe --accept-licenses --default-answer --confirm-command install
-          echo "VULKAN_SDK=C:\VulkanSDK" >> $env:GITHUB_ENV
+          $sdkDir = Get-ChildItem "C:\VulkanSDK" -Directory | Select-Object -First 1
+          echo "VULKAN_SDK=$($sdkDir.FullName)" >> $env:GITHUB_ENV
         shell: pwsh
 
       - run: python tools/build_native.py --output native/${{ matrix.platform }} ${{ matrix.enable_vulkan == 'true' && '--enable-vulkan' || '' }}
