@@ -80,6 +80,19 @@ jobs:
           Write-Output "Direct exit code: $LASTEXITCODE"
         shell: pwsh
 
+      - name: DEBUG reproduce via cmd.exe from bash (Windows)
+        if: matrix.platform == 'windows-x86_64'
+        run: |
+          if [ -n "${VULKAN_SDK:-}" ]; then export PATH="$VULKAN_SDK/Bin:$PATH"; fi
+          echo "PATH=$PATH"
+          EXE=$(find /c/diag/build -iname "vulkan-shaders-gen.exe" | head -1)
+          echo "EXE=$EXE"
+          WINEXE=$(cygpath -w "$EXE")
+          cd /c/diag/src/ggml/src/ggml-vulkan
+          cmd //C "cd /D C:\diag\src\ggml\src\ggml-vulkan && \"$WINEXE\" --glslc \"$VULKAN_SDK/Bin/glslc.exe\" --source C:/diag/src/ggml/src/ggml-vulkan/vulkan-shaders/add.comp --output-dir C:/diag/build/repro.spv --target-hpp C:/diag/build/repro.hpp --target-cpp C:/diag/build/repro.cpp"
+          echo "repro exit code: $?"
+        shell: bash
+
       - run: |
           if [ -n "${VULKAN_SDK:-}" ]; then export PATH="$VULKAN_SDK/Bin:$PATH"; fi
           python tools/build_native.py --output native/${{ matrix.platform }} ${{ matrix.enable_vulkan == 'true' && '--enable-vulkan' || '' }}
