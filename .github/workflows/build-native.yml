@@ -51,7 +51,13 @@ jobs:
         if: matrix.platform == 'windows-x86_64'
         run: |
           Invoke-WebRequest -Uri "https://sdk.lunarg.com/sdk/download/latest/windows/vulkan-runtime.exe" -OutFile vulkan-runtime.exe
-          Start-Process -FilePath .\vulkan-runtime.exe -ArgumentList "/S" -Wait
+          $proc = Start-Process -FilePath .\vulkan-runtime.exe -ArgumentList "/S" -Wait -PassThru
+          Write-Output "Installer exit code: $($proc.ExitCode)"
+          $found = Test-Path "C:\Windows\System32\vulkan-1.dll"
+          Write-Output "vulkan-1.dll present in System32: $found"
+          if (-not $found) {
+            Get-ChildItem "C:\" -Recurse -Filter "vulkan-1.dll" -ErrorAction SilentlyContinue | Select-Object -First 5 FullName
+          }
         shell: pwsh
 
       - run: |
