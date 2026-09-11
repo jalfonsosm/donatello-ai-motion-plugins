@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import platform
 import shutil
 import subprocess
@@ -127,6 +128,34 @@ def _windows_bundle(build_dir: Path, output_dir: Path) -> list[Path]:
         dst = output_dir / dll_path.name
         shutil.copy2(dll_path, dst)
         staged.append(dst)
+
+    # A MinGW build dynamically links against the compiler's own runtime
+    # (libstdc++-6.dll, libgcc_s_seh-1.dll, libwinpthread-1.dll), which lives
+    # next to gcc.exe, not in this project's build tree -- `objdump -p` is
+    # the source of truth for what's actually loaded, matching how
+    # `_macos_bundle` follows `otool -L`. Anything Windows or a GPU driver
+    # already provides lives under `%SystemRoot%` and is deliberately left
+    # unbundled (e.g. vulkan-1.dll -- see the "falls back to CPU" note in
+    # native/README.md).
+    windows_dir = Path(os.environ.get("SystemRoot", r"C:\Windows")).resolve()
+    search_dirs = [Path(p) for p in os.environ.get("PATH", "").split(os.pathsep) if p]
+    seen = {p.name.lower() for p in staged}
+    for binary in staged:
+        result = subprocess.run(["objdump", "-p", str(binary)], check=True, capture_output=True, text=True)
+        for line in result.stdout.splitlines():
+            line = line.strip()
+            if not line.startswith("DLL Name:"):
+                continue
+            dll_name = line.split(":", 1)[1].strip()
+            if dll_name.lower() in seen:
+                continue
+            seen.add(dll_name.lower())
+            found = next((candidate for d in search_dirs if (candidate := d / dll_name).is_file()), None)
+            if found is None or windows_dir in found.resolve().parents:
+                continue
+            dst = output_dir / dll_name
+            shutil.copy2(found, dst)
+            staged.append(dst)
     return staged
 
 
