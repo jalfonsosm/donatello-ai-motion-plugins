@@ -47,53 +47,15 @@ jobs:
           echo "VULKAN_SDK=$($sdkDir.FullName)" >> $env:GITHUB_ENV
         shell: pwsh
 
-      - name: Install Vulkan Runtime (Windows)
-        if: matrix.platform == 'windows-x86_64'
-        run: |
-          Invoke-WebRequest -Uri "https://sdk.lunarg.com/sdk/download/latest/windows/vulkan-runtime.exe" -OutFile vulkan-runtime.exe
-          $proc = Start-Process -FilePath .\vulkan-runtime.exe -ArgumentList "/S" -Wait -PassThru
-          Write-Output "Installer exit code: $($proc.ExitCode)"
-          $found = Test-Path "C:\Windows\System32\vulkan-1.dll"
-          Write-Output "vulkan-1.dll present in System32: $found"
-          if (-not $found) {
-            Get-ChildItem "C:\" -Recurse -Filter "vulkan-1.dll" -ErrorAction SilentlyContinue | Select-Object -First 5 FullName
-          }
-        shell: pwsh
-
-      - name: DEBUG diagnose vulkan-shaders-gen (Windows)
-        if: matrix.platform == 'windows-x86_64'
-        run: |
-          git clone --recurse-submodules https://github.com/localai-org/kimodo.cpp.git C:\diag\src
-          git -C C:\diag\src checkout --detach 568b0253f346fbe369587c7dae73d58594a14c90
-          git -C C:\diag\src submodule update --init --recursive
-          cmake -S C:\diag\src -B C:\diag\build -G Ninja -DCMAKE_BUILD_TYPE=Release -DKIMODO_BUILD_TESTS=OFF -DKIMODO_ENABLE_VULKAN=ON
-          cmake --build C:\diag\build --target vulkan-shaders-gen
-          $exe = Get-ChildItem C:\diag\build -Recurse -Filter "vulkan-shaders-gen.exe" | Select-Object -First 1
-          Write-Output "Found exe: $($exe.FullName)"
-          $vswhere = "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe"
-          $vsPath = & $vswhere -latest -property installationPath
-          $dumpbin = Get-ChildItem "$vsPath\VC\Tools\MSVC" -Recurse -Filter "dumpbin.exe" | Where-Object { $_.FullName -match "Hostx64\\x64" } | Select-Object -First 1
-          Write-Output "Using dumpbin: $($dumpbin.FullName)"
-          & $dumpbin.FullName /dependents $exe.FullName
-          Write-Output "--- Attempting direct execution ---"
-          & $exe.FullName --help
-          Write-Output "Direct exit code: $LASTEXITCODE"
-        shell: pwsh
-
-      - name: DEBUG reproduce via cmd.exe from bash (Windows)
-        if: matrix.platform == 'windows-x86_64'
-        run: |
-          if [ -n "${VULKAN_SDK:-}" ]; then export PATH="$VULKAN_SDK/Bin:$PATH"; fi
-          echo "PATH=$PATH"
-          EXE=$(find /c/diag/build -iname "vulkan-shaders-gen.exe" | head -1)
-          echo "EXE=$EXE"
-          WINEXE=$(cygpath -w "$EXE")
-          cd /c/diag/src/ggml/src/ggml-vulkan
-          cmd //C "cd /D C:\diag\src\ggml\src\ggml-vulkan && \"$WINEXE\" --glslc \"$VULKAN_SDK/Bin/glslc.exe\" --source C:/diag/src/ggml/src/ggml-vulkan/vulkan-shaders/add.comp --output-dir C:/diag/build/repro.spv --target-hpp C:/diag/build/repro.hpp --target-cpp C:/diag/build/repro.cpp"
-          echo "repro exit code: $?"
-        shell: bash
-
       - run: |
+          # Git for Windows' own bundled /mingw64 (a different, older MinGW
+          # subset than the runner's standalone C:\mingw64 GCC 14 toolchain
+          # CMake picks as the compiler) can shadow it on PATH and cause the
+          # freshly-built vulkan-shaders-gen.exe to resolve libstdc++-6.dll/
+          # libwinpthread-1.dll from the wrong, ABI-incompatible copy,
+          # failing at startup with STATUS_DLL_NOT_FOUND. Force the real one
+          # first.
+          if [ -d /c/mingw64/bin ]; then export PATH="/c/mingw64/bin:$PATH"; fi
           if [ -n "${VULKAN_SDK:-}" ]; then export PATH="$VULKAN_SDK/Bin:$PATH"; fi
           python tools/build_native.py --output native/${{ matrix.platform }} ${{ matrix.enable_vulkan == 'true' && '--enable-vulkan' || '' }}
         shell: bash
