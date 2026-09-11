@@ -60,6 +60,26 @@ jobs:
           }
         shell: pwsh
 
+      - name: DEBUG diagnose vulkan-shaders-gen (Windows)
+        if: matrix.platform == 'windows-x86_64'
+        run: |
+          git clone --recurse-submodules https://github.com/localai-org/kimodo.cpp.git C:\diag\src
+          git -C C:\diag\src checkout --detach 568b0253f346fbe369587c7dae73d58594a14c90
+          git -C C:\diag\src submodule update --init --recursive
+          cmake -S C:\diag\src -B C:\diag\build -G Ninja -DCMAKE_BUILD_TYPE=Release -DKIMODO_BUILD_TESTS=OFF -DKIMODO_ENABLE_VULKAN=ON
+          cmake --build C:\diag\build --target vulkan-shaders-gen
+          $exe = Get-ChildItem C:\diag\build -Recurse -Filter "vulkan-shaders-gen.exe" | Select-Object -First 1
+          Write-Output "Found exe: $($exe.FullName)"
+          $vswhere = "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsPath = & $vswhere -latest -property installationPath
+          $dumpbin = Get-ChildItem "$vsPath\VC\Tools\MSVC" -Recurse -Filter "dumpbin.exe" | Where-Object { $_.FullName -match "Hostx64\\x64" } | Select-Object -First 1
+          Write-Output "Using dumpbin: $($dumpbin.FullName)"
+          & $dumpbin.FullName /dependents $exe.FullName
+          Write-Output "--- Attempting direct execution ---"
+          & $exe.FullName --help
+          Write-Output "Direct exit code: $LASTEXITCODE"
+        shell: pwsh
+
       - run: |
           if [ -n "${VULKAN_SDK:-}" ]; then export PATH="$VULKAN_SDK/Bin:$PATH"; fi
           python tools/build_native.py --output native/${{ matrix.platform }} ${{ matrix.enable_vulkan == 'true' && '--enable-vulkan' || '' }}
