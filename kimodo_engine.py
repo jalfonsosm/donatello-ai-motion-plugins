@@ -43,6 +43,16 @@ _PLUGIN_DIR = Path(__file__).resolve().parent
 if str(_PLUGIN_DIR) not in sys.path:
     sys.path.insert(0, str(_PLUGIN_DIR))
 
+# The host keeps one long-lived process, and `import _shared_runtime` is cached
+# in sys.modules by bare name. After the plugin folder updates (or when another
+# plugin loaded an older copy first) a stale helper would shadow the files on
+# disk, e.g. "module '_shared_runtime' has no attribute 'ensure_torch'". Drop
+# any already-imported sibling helper so each plugin load reads current code.
+for _name, _module in list(sys.modules.items()):
+    _origin = getattr(_module, "__file__", None)
+    if _name.startswith("_") and _origin and Path(_origin).resolve().parent == Path(_PLUGIN_DIR).resolve():
+        del sys.modules[_name]
+
 import _shared_runtime as runtime
 
 _MOTION_REPO = "LocalAI-io/Kimodo-SOMA-RP-v1.1-GGML"
