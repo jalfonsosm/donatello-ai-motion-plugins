@@ -1,0 +1,119 @@
+{
+  "schema_version": 1,
+  "platform": "windows-x86_64",
+  "kimodo_cpp_revision": "568b0253f346fbe369587c7dae73d58594a14c90",
+  "ggml_revision": "8c63e70982c95ceb862e3a1073a2c1beef75d60a",
+  "vulkan_enabled": true,
+  "files": [
+    {
+      "filename": "api-ms-win-crt-convert-l1-1-0.dll",
+      "sha256": "ebb2ae5535a64f65daeab8235585114fc9dd2cf1a49f5852d446250b998b6ae4",
+      "executable": false
+    },
+    {
+      "filename": "api-ms-win-crt-environment-l1-1-0.dll",
+      "sha256": "17d63275d00bdd8670422b95bd264c532998e0a1b041079e54fce4b6b7a55819",
+      "executable": false
+    },
+    {
+      "filename": "api-ms-win-crt-filesystem-l1-1-0.dll",
+      "sha256": "9a9e2a65a281644e368d0f272b95ba5f6b445d1c35910d06056c5ebeb77402db",
+      "executable": false
+    },
+    {
+      "filename": "api-ms-win-crt-heap-l1-1-0.dll",
+      "sha256": "bab9ac3ec83e380ae51e4295ef3bf2c738627812d3a49d1e713661abbc8dc57a",
+      "executable": false
+    },
+    {
+      "filename": "api-ms-win-crt-locale-l1-1-0.dll",
+      "sha256": "bd14c67ea28e21d6257ad780a37122c9b5773f69e693f5db6bffaee4d839526e",
+      "executable": false
+    },
+    {
+      "filename": "api-ms-win-crt-math-l1-1-0.dll",
+      "sha256": "606d66d82db562ea7979179d06486a0f94d079941d26b80a1e2c49d29959df6f",
+      "executable": false
+    },
+    {
+      "filename": "api-ms-win-crt-private-l1-1-0.dll",
+      "sha256": "1bc82bed6143d2bf1b6b08a7809f4a5e29317d6fddd338a7da3c0223522e4bbf",
+      "executable": false
+    },
+    {
+      "filename": "api-ms-win-crt-runtime-l1-1-0.dll",
+      "sha256": "c5902934d026d7e15fbe9917d474f3322846a41a25e66f4b2b1f758801879f4b",
+      "executable": false
+    },
+    {
+      "filename": "api-ms-win-crt-stdio-l1-1-0.dll",
+      "sha256": "a9c5a153d8c0286f9b41a2b1c65854ad9e6471b8755b7de87bae4470e60bcab6",
+      "executable": false
+    },
+    {
+      "filename": "api-ms-win-crt-string-l1-1-0.dll",
+      "sha256": "25b8f83a7767211b11132775a0e27a45aa4ec8ab4e6572599f9c172ae3606b40",
+      "executable": false
+    },
+    {
+      "filename": "api-ms-win-crt-time-l1-1-0.dll",
+      "sha256": "7c7f6393f06de11750adb09cc5698ae55cd9fb27b2e51e207286feb1b5b2b156",
+      "executable": false
+    },
+    {
+      "filename": "api-ms-win-crt-utility-l1-1-0.dll",
+      "sha256": "d8ba5f17b9ffcbf3aeaf3fa1da226832d2fa90f81acce0cd669464e76ce434ac",
+      "executable": false
+    },
+    {
+      "filename": "ggml-base.dll",
+      "sha256": "5cabc73b8e41ef05cb565b9713fbea6afe3b2ee7c92e7bb5e081e43ed20e2af0",
+      "executable": false
+    },
+    {
+      "filename": "ggml-cpu.dll",
+      "sha256": "266cbd3e1d88a9b5ea081b3c52be032a57846ff8a50c69456ea7db27a845afe6",
+      "executable": false
+    },
+    {
+      "filename": "ggml-vulkan.dll",
+      "sha256": "c6cdc59f666ecce33331c8fb7a241ae987e7270accd80882a27c5076fde246cf",
+      "executable": false
+    },
+    {
+      "filename": "ggml.dll",
+      "sha256": "29a8a030c26d75dc81d3662259ff1bf6dfc1a3068be7ca4f98d7e361a599c88f",
+      "executable": false
+    },
+    {
+      "filename": "kmd-generate.exe",
+      "sha256": "ed044047bbc23a5daefdd13a20df45a27aabed4bc2fec782f10b15e86b534645",
+      "executable": true
+    },
+    {
+      "filename": "kmd-inspect.exe",
+      "sha256": "5ec45a494730c5bb72c2ee5ff0194aff833e528362c9ac4317f864db7f0089eb",
+      "executable": true
+    },
+    {
+      "filename": "libgcc_s_seh-1.dll",
+      "sha256": "16208d55dd47602ea8bc27d752faa66afbecba2200e346ae0b41c9a94fbe3b0e",
+      "executable": false
+    },
+    {
+      "filename": "libgomp-1.dll",
+      "sha256": "ae3939c3ef66913817835c79492c47f737dde2e3c5936923ae980f87c9dc93fc",
+      "executable": false
+    },
+    {
+      "filename": "libstdc++-6.dll",
+      "sha256": "ea252277c5939cd63848a3db465cf7c88e48dbe169edfd4f19d345851a6b400c",
+      "executable": false
+    },
+    {
+      "filename": "libwinpthread-1.dll",
+      "sha256": "f5042e8e3d21edce20c1bc99445f551b89212403164e9388d2c6f48d6d6bcb78",
+      "executable": false
+    }
+  ]
+}

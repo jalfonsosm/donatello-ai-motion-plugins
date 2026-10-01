@@ -1,0 +1,7 @@
+__pycache__/
+*.py[cod]
+# Prebuilt native binaries under native/<platform>/ ARE committed (see
+# native/README.md) -- the whole point is that end users never build them.
+# This only ignores stray local build trees a contributor's own cmake run
+# might leave next to them.
+native/*/build/
